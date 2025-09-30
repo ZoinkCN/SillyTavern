@@ -79,6 +79,10 @@
     filter: grayscale(0.5);
 }
 
+#preset_scripts_block:not(:has(#regex_preset_toggle:checked)) {
+    opacity: 0.5;
+}
+
 input.disable_regex,
 input.enable_scoped {
     display: none !important;
