@@ -1,50 +1,17 @@
-import {
-    characters,
-    event_types,
-    eventSource,
-    getCurrentChatId,
-    main_api,
-    messageFormatting,
-    reloadCurrentChat,
-    saveSettingsDebounced,
-    this_chid,
-} from '../../../script.js';
+import { characters, eventSource, event_types, getCurrentChatId, messageFormatting, reloadCurrentChat, saveSettingsDebounced, this_chid, main_api } from '../../../script.js';
 import { extension_settings, renderExtensionTemplateAsync, writeExtensionField } from '../../extensions.js';
 import { selected_group } from '../../group-chats.js';
-import { t } from '../../i18n.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from '../../popup.js';
-import { getPresetManager } from '../../preset-manager.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
-import {
-    ARGUMENT_TYPE,
-    SlashCommandArgument,
-    SlashCommandNamedArgument,
-} from '../../slash-commands/SlashCommandArgument.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders, enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
-import { enumTypes, SlashCommandEnumValue } from '../../slash-commands/SlashCommandEnumValue.js';
+import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
+import { download, equalsIgnoreCaseAndAccents, escapeHtml, getFileText, getSortableDelay, isFalseBoolean, isTrueBoolean, regexFromString, setInfoBlock, uuidv4 } from '../../utils.js';
+import { getPresetName, getRegexScripts, getScriptsByType, regex_placement, runRegexScript, scriptTypes, substitute_find_regex } from './engine.js';
+import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
-import {
-    download,
-    equalsIgnoreCaseAndAccents,
-    escapeHtml,
-    getFileText,
-    getSortableDelay,
-    isFalseBoolean,
-    isTrueBoolean,
-    regexFromString,
-    setInfoBlock,
-    uuidv4,
-} from '../../utils.js';
-import {
-    getPresetName,
-    getRegexScripts,
-    getScriptsByType,
-    regex_placement,
-    runRegexScript,
-    scriptTypes,
-    substitute_find_regex,
-} from './engine.js';
+import { getPresetManager } from '../../preset-manager.js';
 
 const sanitizeFileName = name => name.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
 
@@ -132,11 +99,9 @@ class RegexPresetManager {
             return true;
         }
 
-        return (
-            !global1.every(id => global2.includes(id)) ||
+        return !global1.every(id => global2.includes(id)) ||
             !scoped1.every(id => scoped2.includes(id)) ||
             !preset1.every(id => preset2.includes(id))
-        );
     }
 
     /**
@@ -196,7 +161,7 @@ class RegexPresetManager {
             return;
         }
 
-        this.presetSelect.addEventListener('change', async event => {
+        this.presetSelect.addEventListener('change', async (event) => {
             const selectedPresetId = this.presetSelect.value;
             const fromSlashCommand = event instanceof CustomEvent && event?.detail?.fromSlashCommand === true;
 
@@ -215,9 +180,7 @@ class RegexPresetManager {
             }
 
             await this.applyPreset(selectedPresetId);
-            extension_settings.regex_presets.forEach(p => {
-                p.isSelected = p.id === selectedPresetId;
-            });
+            extension_settings.regex_presets.forEach(p => { p.isSelected = p.id === selectedPresetId; });
             saveSettingsDebounced();
             this.updateStoredState(selectedPresetId);
         });
@@ -296,61 +259,50 @@ class RegexPresetManager {
      * @returns {void}
      */
     registerSlashCommands() {
-        SlashCommandParser.addCommandObject(
-            SlashCommand.fromProps({
-                name: 'regex-preset',
-                helpString: t`Selects a regex preset by name or ID. Gets the current regex preset ID if no argument is provided.`,
-                callback: (args, name) => {
-                    if (!this.presetSelect) {
-                        return '';
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'regex-preset',
+            helpString: t`Selects a regex preset by name or ID. Gets the current regex preset ID if no argument is provided.`,
+            callback: (args, name) => {
+                if (!this.presetSelect) {
+                    return '';
+                }
+
+                name = String(name ?? '').trim();
+
+                if (name) {
+                    const quiet = isTrueBoolean(args?.quiet?.toString());
+                    const foundId = extension_settings.regex_presets.find(p => equalsIgnoreCaseAndAccents(p.id, name) || equalsIgnoreCaseAndAccents(p.name, name))?.id;
+
+                    if (foundId) {
+                        this.presetSelect.value = foundId;
+                        this.presetSelect.dispatchEvent(new CustomEvent('change', { detail: { fromSlashCommand: true } }));
+                        return foundId;
                     }
 
-                    name = String(name ?? '').trim();
+                    !quiet && toastr.warning(`Regex preset "${name}" not found`);
+                    return '';
+                }
 
-                    if (name) {
-                        const quiet = isTrueBoolean(args?.quiet?.toString());
-                        const foundId = extension_settings.regex_presets.find(
-                            p => equalsIgnoreCaseAndAccents(p.id, name) || equalsIgnoreCaseAndAccents(p.name, name),
-                        )?.id;
-
-                        if (foundId) {
-                            this.presetSelect.value = foundId;
-                            this.presetSelect.dispatchEvent(
-                                new CustomEvent('change', {
-                                    detail: { fromSlashCommand: true },
-                                }),
-                            );
-                            return foundId;
-                        }
-
-                        !quiet && toastr.warning(`Regex preset "${name}" not found`);
-                        return '';
-                    }
-
-                    return this.presetSelect.value;
-                },
-                returns: 'current preset ID',
-                namedArgumentList: [
-                    SlashCommandNamedArgument.fromProps({
-                        name: 'quiet',
-                        description: 'Suppress the toast message on preset change',
-                        typeList: [ARGUMENT_TYPE.BOOLEAN],
-                        defaultValue: 'false',
-                        enumList: commonEnumProviders.boolean('trueFalse')(),
-                    }),
-                ],
-                unnamedArgumentList: [
-                    SlashCommandArgument.fromProps({
-                        description: 'regex preset name or ID',
-                        typeList: [ARGUMENT_TYPE.STRING],
-                        enumProvider: () =>
-                            extension_settings.regex_presets.map(
-                                x => new SlashCommandEnumValue(x.id, x.name, enumTypes.enum, enumIcons.preset),
-                            ),
-                    }),
-                ],
-            }),
-        );
+                return this.presetSelect.value;
+            },
+            returns: 'current preset ID',
+            namedArgumentList: [
+                SlashCommandNamedArgument.fromProps({
+                    name: 'quiet',
+                    description: 'Suppress the toast message on preset change',
+                    typeList: [ARGUMENT_TYPE.BOOLEAN],
+                    defaultValue: 'false',
+                    enumList: commonEnumProviders.boolean('trueFalse')(),
+                }),
+            ],
+            unnamedArgumentList: [
+                SlashCommandArgument.fromProps({
+                    description: 'regex preset name or ID',
+                    typeList: [ARGUMENT_TYPE.STRING],
+                    enumProvider: () => extension_settings.regex_presets.map(x => new SlashCommandEnumValue(x.id, x.name, enumTypes.enum, enumIcons.preset)),
+                }),
+            ],
+        }));
     }
 
     /**
@@ -392,9 +344,9 @@ class RegexPresetManager {
         }
 
         // Only enable scripts that are in the preset
-        targetList.forEach(script => {
+        targetList.forEach((script => {
             script.disabled = !presetList.some(p => p.id === script.id);
-        });
+        }));
 
         // First sort by the order in the preset, then the original order
         targetList.sort((a, b) => {
@@ -427,7 +379,7 @@ class RegexPresetManager {
         await this.applyPresetList({
             presetList: preset.scoped,
             targetList: characters[this_chid]?.data?.extensions?.regex_scripts,
-            saveFunction: scripts => writeExtensionField(this_chid, 'regex_scripts', scripts),
+            saveFunction: (scripts) => writeExtensionField(this_chid, 'regex_scripts', scripts),
         });
         await this.applyPresetList({
             presetList: preset.preset,
@@ -474,9 +426,7 @@ class RegexPresetManager {
             return;
         }
 
-        const name = isUpdate
-            ? existingPreset.name
-            : await Popup.show.input(t`Enter a name for the new regex preset:`, '');
+        const name = isUpdate ? existingPreset.name : await Popup.show.input(t`Enter a name for the new regex preset:`, '');
         const id = isUpdate ? existingPreset.id : presetId;
 
         if (!name || !name.trim().length) {
@@ -498,9 +448,7 @@ class RegexPresetManager {
             extension_settings.regex_presets.push(preset);
         }
 
-        extension_settings.regex_presets.forEach(p => {
-            p.isSelected = p.id === id;
-        });
+        extension_settings.regex_presets.forEach(p => { p.isSelected = p.id === id; });
         saveSettingsDebounced();
 
         toastr.success(isUpdate ? t`Regex preset updated` : t`Regex preset saved`);
@@ -527,9 +475,7 @@ class RegexPresetManager {
         extension_settings.regex_presets.splice(presetIndex, 1);
 
         // Select the first preset if any exist
-        extension_settings.regex_presets.forEach((p, i) => {
-            p.isSelected = i === 0;
-        });
+        extension_settings.regex_presets.forEach((p, i) => { p.isSelected = i === 0; });
         saveSettingsDebounced();
 
         toastr.success(t`Regex preset deleted`);
@@ -600,9 +546,7 @@ async function saveRegexScript(regexScript, existingScriptIndex, scriptType, sav
 
     // Is there someplace to place results?
     if (regexScript.placement.length === 0) {
-        toastr.warning(
-            t`This regex script will not work, but was saved anyway: One "Affects" checkbox must be selected!`,
-        );
+        toastr.warning(t`This regex script will not work, but was saved anyway: One "Affects" checkbox must be selected!`);
     }
 
     if (existingScriptIndex !== -1) {
@@ -717,9 +661,7 @@ async function loadRegexScripts() {
 
         scriptHtml.attr('id', script.id);
         scriptHtml.find('.regex_script_name').text(script.scriptName);
-        scriptHtml
-            .find('.disable_regex')
-            .prop('checked', script.disabled ?? false)
+        scriptHtml.find('.disable_regex').prop('checked', script.disabled ?? false)
             .on('input', async function () {
                 script.disabled = !!$(this).prop('checked');
                 await save();
@@ -734,10 +676,7 @@ async function loadRegexScripts() {
             await onRegexEditorOpenClick(scriptHtml.attr('id'), scriptType);
         });
         scriptHtml.find('.move_to_global').on('click', async function () {
-            const confirm = await callGenericPopup(
-                t`Are you sure you want to move this regex script to global?`,
-                POPUP_TYPE.CONFIRM,
-            );
+            const confirm = await callGenericPopup(t`Are you sure you want to move this regex script to global?`, POPUP_TYPE.CONFIRM);
 
             if (!confirm) {
                 return;
@@ -753,10 +692,7 @@ async function loadRegexScripts() {
                 toastr.error(t`Cannot edit scoped scripts in group chats.`);
                 return;
             }
-            const confirm = await callGenericPopup(
-                t`Are you sure you want to move this regex script to scoped?`,
-                POPUP_TYPE.CONFIRM,
-            );
+            const confirm = await callGenericPopup(t`Are you sure you want to move this regex script to scoped?`, POPUP_TYPE.CONFIRM);
             if (!confirm) {
                 return;
             }
@@ -778,10 +714,7 @@ async function loadRegexScripts() {
             download(fileData, fileName, 'application/json');
         });
         scriptHtml.find('.delete_regex').on('click', async function () {
-            const confirm = await callGenericPopup(
-                t`Are you sure you want to delete this regex script?`,
-                POPUP_TYPE.CONFIRM,
-            );
+            const confirm = await callGenericPopup(t`Are you sure you want to delete this regex script?`, POPUP_TYPE.CONFIRM);
             if (!confirm) {
                 return;
             }
@@ -798,15 +731,9 @@ async function loadRegexScripts() {
         $(container).append(scriptHtml);
     }
 
-    getScriptsByType(scriptTypes.GLOBAL).forEach((script, index, array) =>
-        renderScript('#saved_regex_scripts', script, scriptTypes.GLOBAL, index),
-    );
-    getScriptsByType(scriptTypes.SCOPED).forEach((script, index, array) =>
-        renderScript('#saved_scoped_scripts', script, scriptTypes.SCOPED, index),
-    );
-    getScriptsByType(scriptTypes.PRESET).forEach((script, index, array) =>
-        renderScript('#saved_preset_scripts', script, scriptTypes.PRESET, index),
-    );
+    getScriptsByType(scriptTypes.GLOBAL).forEach((script, index) => renderScript('#saved_regex_scripts', script, scriptTypes.GLOBAL, index));
+    getScriptsByType(scriptTypes.SCOPED).forEach((script, index) => renderScript('#saved_scoped_scripts', script, scriptTypes.SCOPED, index));
+    getScriptsByType(scriptTypes.PRESET).forEach((script, index) => renderScript('#saved_preset_scripts', script, scriptTypes.PRESET, index));
 
     const isScopedAllowed = extension_settings?.character_allowed_regex?.includes(characters?.[this_chid]?.avatar);
     $('#regex_scoped_toggle').prop('checked', isScopedAllowed);
@@ -829,13 +756,13 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
     // If an ID exists, fill in all the values
     let existingScriptIndex = -1;
     if (existingId) {
-        existingScriptIndex = array.findIndex(script => script.id === existingId);
+        existingScriptIndex = array.findIndex((script) => script.id === existingId);
         if (existingScriptIndex !== -1) {
             const existingScript = array[existingScriptIndex];
             if (existingScript.scriptName) {
                 editorHtml.find('.regex_script_name').val(existingScript.scriptName);
             } else {
-                toastr.error("This script doesn't have a name! Please delete it.");
+                toastr.error('This script doesn\'t have a name! Please delete it.');
                 return;
             }
 
@@ -846,22 +773,28 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
             editorHtml.find('input[name="only_format_display"]').prop('checked', existingScript.markdownOnly ?? false);
             editorHtml.find('input[name="only_format_prompt"]').prop('checked', existingScript.promptOnly ?? false);
             editorHtml.find('input[name="run_on_edit"]').prop('checked', existingScript.runOnEdit ?? false);
-            editorHtml
-                .find('select[name="substitute_regex"]')
-                .val(existingScript.substituteRegex ?? substitute_find_regex.NONE);
+            editorHtml.find('select[name="substitute_regex"]').val(existingScript.substituteRegex ?? substitute_find_regex.NONE);
             editorHtml.find('input[name="min_depth"]').val(existingScript.minDepth ?? '');
             editorHtml.find('input[name="max_depth"]').val(existingScript.maxDepth ?? '');
 
-            existingScript.placement.forEach(element => {
-                editorHtml.find(`input[name="replace_position"][value="${element}"]`).prop('checked', true);
+            existingScript.placement.forEach((element) => {
+                editorHtml
+                    .find(`input[name="replace_position"][value="${element}"]`)
+                    .prop('checked', true);
             });
         }
     } else {
-        editorHtml.find('input[name="only_format_display"]').prop('checked', true);
+        editorHtml
+            .find('input[name="only_format_display"]')
+            .prop('checked', true);
 
-        editorHtml.find('input[name="run_on_edit"]').prop('checked', true);
+        editorHtml
+            .find('input[name="run_on_edit"]')
+            .prop('checked', true);
 
-        editorHtml.find('input[name="replace_position"][value="1"]').prop('checked', true);
+        editorHtml
+            .find('input[name="replace_position"][value="1"]')
+            .prop('checked', true);
     }
 
     editorHtml.find('#regex_test_mode_toggle').on('click', function () {
@@ -881,10 +814,7 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
             scriptName: editorHtml.find('.regex_script_name').val().toString(),
             findRegex: editorHtml.find('.find_regex').val().toString(),
             replaceString: editorHtml.find('.regex_replace_string').val().toString(),
-            trimStrings:
-                String(editorHtml.find('.regex_trim_strings').val())
-                    .split('\n')
-                    .filter(e => e.length !== 0) || [],
+            trimStrings: String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [],
             substituteRegex: Number(editorHtml.find('select[name="substitute_regex"]').val()),
             disabled: false,
             promptOnly: false,
@@ -902,30 +832,21 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
     editorHtml.find('input, textarea, select').on('input', updateTestResult);
     updateInfoBlock(editorHtml);
 
-    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', {
-        okButton: t`Save`,
-        cancelButton: t`Cancel`,
-        allowVerticalScrolling: true,
-    });
+    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
     if (popupResult) {
         const newRegexScript = {
             id: existingId ? String(existingId) : uuidv4(),
             scriptName: String(editorHtml.find('.regex_script_name').val()),
             findRegex: String(editorHtml.find('.find_regex').val()),
             replaceString: String(editorHtml.find('.regex_replace_string').val()),
-            trimStrings:
-                String(editorHtml.find('.regex_trim_strings').val())
-                    .split('\n')
-                    .filter(e => e.length !== 0) || [],
+            trimStrings: String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [],
             placement:
                 editorHtml
                     .find('input[name="replace_position"]')
                     .filter(':checked')
-                    .map(function () {
-                        return parseInt($(this).val().toString());
-                    })
+                    .map(function () { return parseInt($(this).val().toString()); })
                     .get()
-                    .filter(e => !isNaN(e)) || [],
+                    .filter((e) => !isNaN(e)) || [],
             disabled: editorHtml.find('input[name="disabled"]').prop('checked'),
             markdownOnly: editorHtml.find('input[name="only_format_display"]').prop('checked'),
             promptOnly: editorHtml.find('input[name="only_format_prompt"]').prop('checked'),
@@ -972,10 +893,9 @@ function buildReplacementHtml(match, pattern) {
             container.appendChild(mark);
         } else if (backref === '$`') {
             container.appendChild(document.createTextNode(match.input.substring(0, match.index)));
-        } else if (backref === "$'") {
+        } else if (backref === '$\'') {
             container.appendChild(document.createTextNode(match.input.substring(match.index + match[0].length)));
-        } else {
-            // It's a numbered capture group, $n.
+        } else { // It's a numbered capture group, $n.
             const groupIndex = parseInt(reMatch[1], 10);
             if (groupIndex > 0 && groupIndex < match.length && match[groupIndex] !== undefined) {
                 const mark = document.createElement('mark');
@@ -1017,31 +937,14 @@ function executeRegexScriptForDebugging(script, text) {
         if (!originalRegex) throw new Error('Invalid regex string');
     } catch (e) {
         err = `Compile error: ${e.message}`;
-        return {
-            output: text,
-            highlightedOutput: text,
-            error: err,
-            charsCaptured: 0,
-            charsAdded: 0,
-            charsRemoved: 0,
-        };
+        return { output: text, highlightedOutput: text, error: err, charsCaptured: 0, charsAdded: 0, charsRemoved: 0 };
     }
 
-    const globalRegex = new RegExp(
-        originalRegex.source,
-        originalRegex.flags.includes('g') ? originalRegex.flags : originalRegex.flags + 'g',
-    );
+    const globalRegex = new RegExp(originalRegex.source, originalRegex.flags.includes('g') ? originalRegex.flags : originalRegex.flags + 'g');
     const matches = [...text.matchAll(globalRegex)];
 
     if (matches.length === 0) {
-        return {
-            output: text,
-            highlightedOutput: escapeHtml(text),
-            error: null,
-            charsCaptured: 0,
-            charsAdded: 0,
-            charsRemoved: 0,
-        };
+        return { output: text, highlightedOutput: escapeHtml(text), error: null, charsCaptured: 0, charsAdded: 0, charsRemoved: 0 };
     }
 
     let outputText = '';
@@ -1078,16 +981,11 @@ function executeRegexScriptForDebugging(script, text) {
                 if (backref === '$$') {
                     replacementForPlainText += '$';
                 } else if (backref === '$&') {
-                    charsKeptFromMatch += (match[0] || '').length;
-                    replacementForPlainText += match[0] || '';
+                    charsKeptFromMatch += (match[0] || '').length; replacementForPlainText += (match[0] || '');
                 } else if (backref === '$`') {
-                    const part = match.input.substring(0, match.index);
-                    charsKeptFromMatch += part.length;
-                    replacementForPlainText += part;
-                } else if (backref === "$'") {
-                    const part = match.input.substring(match.index + match[0].length);
-                    charsKeptFromMatch += part.length;
-                    replacementForPlainText += part;
+                    const part = match.input.substring(0, match.index); charsKeptFromMatch += part.length; replacementForPlainText += part;
+                } else if (backref === '$\'') {
+                    const part = match.input.substring(match.index + match[0].length); charsKeptFromMatch += part.length; replacementForPlainText += part;
                 } else {
                     const groupIndex = parseInt(reMatch[1], 10);
                     if (groupIndex > 0 && groupIndex < match.length && match[groupIndex] !== undefined) {
@@ -1102,7 +1000,7 @@ function executeRegexScriptForDebugging(script, text) {
             replacementForPlainText += finalLiteralPart;
 
             totalCharsAdded += charsAddedInMatch;
-            totalCharsRemoved += originalMatchText.length - charsKeptFromMatch;
+            totalCharsRemoved += (originalMatchText.length - charsKeptFromMatch);
 
             outputText += replacementForPlainText;
             // --- End of statistics logic ---
@@ -1122,6 +1020,7 @@ function executeRegexScriptForDebugging(script, text) {
         const trailingText = text.substring(lastIndex);
         outputText += trailingText;
         highlightedOutput += escapeHtml(trailingText);
+
     } catch (e) {
         err = (err ? err + '; ' : '') + `Replace error: ${e.message}`;
         outputText = text; // Fallback
@@ -1179,7 +1078,7 @@ function populateDebuggerRuleList(container) {
 
     container.data('allScripts', [...globalScripts, ...scopedScripts, ...presetScripts]);
 
-    const renderRule = script => {
+    const renderRule = (script) => {
         if (!script.id) script.id = uuidv4();
         const ruleElementContent = $(ruleTemplate.prop('content')).clone();
         const ruleElement = ruleElementContent.find('.regex-debugger-rule');
@@ -1192,11 +1091,11 @@ function populateDebuggerRuleList(container) {
         ruleElement
             .find('.rule-scope')
             .text(
-                script.type === scriptTypes.SCOPED
-                    ? t`Scoped`
-                    : script.type === scriptTypes.GLOBAL
-                      ? t`Global`
-                      : t`Preset`,
+                {
+                    [scriptTypes.SCOPED]: t`Scoped`,
+                    [scriptTypes.GLOBAL]: t`Global`,
+                    [scriptTypes.PRESET]: t`Preset`,
+                }[script.type]
             );
         ruleElement.find('.rule-enabled').prop('checked', !script.disabled);
         // @ts-ignore
@@ -1217,13 +1116,11 @@ function populateDebuggerRuleList(container) {
                 const containerHeight = container.height();
 
                 // Center the element if possible
-                let scrollTo = containerScrollTop + targetTop - containerHeight / 2 + stepElement.height() / 2;
+                let scrollTo = containerScrollTop + targetTop - (containerHeight / 2) + (stepElement.height() / 2);
 
                 container.animate({ scrollTop: scrollTo }, 300); // 300ms smooth scroll
 
-                stepElement
-                    .css('transition', 'background-color 0.5s')
-                    .css('background-color', 'var(--highlight_color)');
+                stepElement.css('transition', 'background-color 0.5s').css('background-color', 'var(--highlight_color)');
                 setTimeout(() => stepElement.css('background-color', ''), 1000);
             }
         });
@@ -1275,18 +1172,9 @@ async function onRegexDebuggerOpenClick() {
     debuggerHtml.find('#regex_debugger_run_test').on('click', function () {
         const allScripts = debuggerHtml.data('allScripts');
         const orderedRuleIds = [
-            ...$('#regex_debugger_rules_global')
-                .find('li.regex-debugger-rule')
-                .map((i, el) => $(el).data('id'))
-                .get(),
-            ...$('#regex_debugger_rules_scoped')
-                .find('li.regex-debugger-rule')
-                .map((i, el) => $(el).data('id'))
-                .get(),
-            ...$('#regex_debugger_rules_preset')
-                .find('li.regex-debugger-rule')
-                .map((i, el) => $(el).data('id'))
-                .get(),
+            ...$('#regex_debugger_rules_global').find('li.regex-debugger-rule').map((i, el) => $(el).data('id')).get(),
+            ...$('#regex_debugger_rules_scoped').find('li.regex-debugger-rule').map((i, el) => $(el).data('id')).get(),
+            ...$('#regex_debugger_rules_preset').find('li.regex-debugger-rule').map((i, el) => $(el).data('id')).get(),
         ];
 
         const rawInput = String($('#regex_debugger_raw_input').val());
@@ -1324,14 +1212,7 @@ async function onRegexDebuggerOpenClick() {
                 const stepHeader = stepElement.find('.step-header');
                 stepHeader.find('strong').text(t`After:` + ` ${script.scriptName}`);
 
-                const metricsHtml =
-                    '<span class="step-metrics">' +
-                    t`Captured:` +
-                    ` ${result.charsCaptured}, ` +
-                    t`Added:` +
-                    ` +${result.charsAdded}, ` +
-                    t`Removed:` +
-                    ` -${result.charsRemoved}</span>`;
+                const metricsHtml = '<span class="step-metrics">' + t`Captured:` + ` ${result.charsCaptured}, ` + t`Added:` + ` +${result.charsAdded}, ` + t`Removed:` + ` -${result.charsRemoved}</span>`;
                 stepHeader.append(metricsHtml);
 
                 if (displayMode === 'highlight') {
@@ -1349,16 +1230,9 @@ async function onRegexDebuggerOpenClick() {
             }
         });
 
-        const summaryHtml =
-            `
+        const summaryHtml = `
             <div id="regex_debugger_final_summary" class="regex-debugger-summary">
-                <strong>` +
-            t`Total Captured:` +
-            `</strong> ${totalCharsCaptured} | <strong>` +
-            t`Total Added:` +
-            `</strong> +${totalCharsAdded} | <strong>` +
-            t`Total Removed:` +
-            `</strong> -${totalCharsRemoved}
+                <strong>` + t`Total Captured:` + `</strong> ${totalCharsCaptured} | <strong>` + t`Total Added:` + `</strong> +${totalCharsAdded} | <strong>` + t`Total Removed:` + `</strong> -${totalCharsRemoved}
             </div>
         `;
         finalOutput.before(summaryHtml);
@@ -1376,21 +1250,9 @@ async function onRegexDebuggerOpenClick() {
 
     debuggerHtml.find('#regex_debugger_save_order').on('click', async function () {
         const allKnownScripts = getRegexScripts();
-        const newGlobalScripts = $('#regex_debugger_rules_global')
-            .children('li')
-            .map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id')))
-            .get()
-            .filter(Boolean);
-        const newScopedScripts = $('#regex_debugger_rules_scoped')
-            .children('li')
-            .map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id')))
-            .get()
-            .filter(Boolean);
-        const newPresetScripts = $('#regex_debugger_rules_preset')
-            .children('li')
-            .map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id')))
-            .get()
-            .filter(Boolean);
+        const newGlobalScripts = $('#regex_debugger_rules_global').children('li').map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id'))).get().filter(Boolean);
+        const newScopedScripts = $('#regex_debugger_rules_scoped').children('li').map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id'))).get().filter(Boolean);
+        const newPresetScripts = $('#regex_debugger_rules_preset').children('li').map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id'))).get().filter(Boolean);
 
         extension_settings.regex = newGlobalScripts;
         if (this_chid !== undefined) {
@@ -1411,20 +1273,11 @@ async function onRegexDebuggerOpenClick() {
         const currentPopupContent = $('div:has(> #regex_debugger_rules)');
         populateDebuggerRuleList(currentPopupContent);
         // @ts-ignore
-        currentPopupContent
-            .find('#regex_debugger_rules_global')
-            .sortable({ delay: getSortableDelay() })
-            .disableSelection();
+        currentPopupContent.find('#regex_debugger_rules_global').sortable({ delay: getSortableDelay() }).disableSelection();
         // @ts-ignore
-        currentPopupContent
-            .find('#regex_debugger_rules_scoped')
-            .sortable({ delay: getSortableDelay() })
-            .disableSelection();
+        currentPopupContent.find('#regex_debugger_rules_scoped').sortable({ delay: getSortableDelay() }).disableSelection();
         // @ts-ignore
-        currentPopupContent
-            .find('#regex_debugger_rules_preset')
-            .sortable({ delay: getSortableDelay() })
-            .disableSelection();
+        currentPopupContent.find('#regex_debugger_rules_preset').sortable({ delay: getSortableDelay() }).disableSelection();
     });
 
     debuggerHtml.find('#regex_debugger_expand_steps').on('click', function () {
@@ -1456,9 +1309,7 @@ async function onRegexDebuggerOpenClick() {
                     const scrollTo = contentPanel.scrollTop() + targetElement.position().top;
                     contentPanel.animate({ scrollTop: scrollTo }, 300);
 
-                    targetElement
-                        .css('transition', 'background-color 0.5s')
-                        .css('background-color', 'var(--highlight_color)');
+                    targetElement.css('transition', 'background-color 0.5s').css('background-color', 'var(--highlight_color)');
                     setTimeout(() => targetElement.css('background-color', ''), 1000);
                 }
             });
@@ -1467,26 +1318,16 @@ async function onRegexDebuggerOpenClick() {
         });
 
         popupContainer.append(navPanel).append(contentPanel);
-        callGenericPopup(popupContainer, POPUP_TYPE.TEXT, 'Step-by-step Transformation', {
-            wide: true,
-            allowVerticalScrolling: false,
-        });
+        callGenericPopup(popupContainer, POPUP_TYPE.TEXT, 'Step-by-step Transformation', { wide: true, allowVerticalScrolling: false });
     });
 
     debuggerHtml.find('#regex_debugger_expand_final').on('click', function () {
         const content = $('#regex_debugger_final_output').html();
         const popupContent = $('<div class="regex-popup-content"></div>').html(content);
-        callGenericPopup(popupContent, POPUP_TYPE.TEXT, 'Final Output', {
-            wide: true,
-            large: true,
-            allowVerticalScrolling: true,
-        });
+        callGenericPopup(popupContent, POPUP_TYPE.TEXT, 'Final Output', { wide: true, large: true, allowVerticalScrolling: true });
     });
 
-    await callGenericPopup(debuggerHtml.children(), POPUP_TYPE.TEXT, '', {
-        wide: true,
-        allowVerticalScrolling: true,
-    });
+    await callGenericPopup(debuggerHtml.children(), POPUP_TYPE.TEXT, '', { wide: true, allowVerticalScrolling: true });
 }
 
 /**
@@ -1529,7 +1370,7 @@ function migrateSettings() {
     let performSave = false;
 
     // Current: If MD Display is present in placement, remove it and add new placements/MD option
-    extension_settings.regex.forEach(script => {
+    extension_settings.regex.forEach((script) => {
         if (!script.id) {
             script.id = uuidv4();
             performSave = true;
@@ -1541,10 +1382,9 @@ function migrateSettings() {
         }
 
         if (script.placement.includes(regex_placement.MD_DISPLAY)) {
-            script.placement =
-                script.placement.length === 1
-                    ? Object.values(regex_placement).filter(e => e !== regex_placement.MD_DISPLAY)
-                    : (script.placement = script.placement.filter(e => e !== regex_placement.MD_DISPLAY));
+            script.placement = script.placement.length === 1 ?
+                Object.values(regex_placement).filter((e) => e !== regex_placement.MD_DISPLAY) :
+                script.placement = script.placement.filter((e) => e !== regex_placement.MD_DISPLAY);
 
             script.markdownOnly = true;
             script.promptOnly = true;
@@ -1555,10 +1395,9 @@ function migrateSettings() {
         // Old system and sendas placement migration
         // 4 - sendAs
         if (script.placement.includes(4)) {
-            script.placement =
-                script.placement.length === 1
-                    ? [regex_placement.SLASH_COMMAND]
-                    : (script.placement = script.placement.filter(e => e !== 4));
+            script.placement = script.placement.length === 1 ?
+                [regex_placement.SLASH_COMMAND] :
+                script.placement = script.placement.filter((e) => e !== 4);
 
             performSave = true;
         }
@@ -1626,7 +1465,9 @@ async function toggleRegexCallback(args, scriptName) {
     if (typeof scriptName !== 'string') throw new Error('Script name must be a string.');
 
     const quiet = isTrueBoolean(args?.quiet);
-    const action = isTrueBoolean(args?.state) ? 'enable' : isFalseBoolean(args?.state) ? 'disable' : 'toggle';
+    const action = isTrueBoolean(args?.state) ? 'enable' :
+        isFalseBoolean(args?.state) ? 'disable' :
+            'toggle';
 
     const scripts = getRegexScripts();
     const script = scripts.find(s => equalsIgnoreCaseAndAccents(s.scriptName, scriptName));
@@ -1730,8 +1571,8 @@ function getScriptType(script) {
     return getScriptsByType(scriptTypes.SCOPED).some(s => s.id === script.id)
         ? scriptTypes.SCOPED
         : getScriptsByType(scriptTypes.PRESET).some(s => s.id === script.id)
-          ? scriptTypes.PRESET
-          : scriptTypes.GLOBAL;
+            ? scriptTypes.PRESET
+            : scriptTypes.GLOBAL;
 }
 
 function getSelectedScripts() {
@@ -2012,19 +1853,12 @@ jQuery(async () => {
             toastr.warning(t`No regex scripts selected for deletion.`);
             return;
         }
-        const confirm = await callGenericPopup(
-            'Are you sure you want to delete the selected regex scripts?',
-            POPUP_TYPE.CONFIRM,
-        );
+        const confirm = await callGenericPopup('Are you sure you want to delete the selected regex scripts?', POPUP_TYPE.CONFIRM);
         if (!confirm) {
             return;
         }
         for (const script of scripts) {
-            await deleteRegexScript({
-                id: script.id,
-                scriptType: getScriptType(script),
-                saveSettings: false,
-            });
+            await deleteRegexScript({ id: script.id, scriptType: getScriptType(script), saveSettings: false });
         }
         saveSettingsDebounced();
         await loadRegexScripts();
@@ -2046,7 +1880,7 @@ jQuery(async () => {
     let sortableDatas = [
         {
             selector: '#saved_regex_scripts',
-            setter: x => (extension_settings.regex = x),
+            setter: x => extension_settings.regex = x,
             getter: () => getScriptsByType(scriptTypes.GLOBAL),
         },
         {
@@ -2073,15 +1907,13 @@ jQuery(async () => {
             stop: async function () {
                 const oldScripts = getter();
                 const newScripts = [];
-                $(selector)
-                    .children()
-                    .each(function () {
-                        const id = $(this).attr('id');
-                        const existingScript = oldScripts.find(e => e.id === id);
-                        if (existingScript) {
-                            newScripts.push(existingScript);
-                        }
-                    });
+                $(selector).children().each(function () {
+                    const id = $(this).attr('id');
+                    const existingScript = oldScripts.find((e) => e.id === id);
+                    if (existingScript) {
+                        newScripts.push(existingScript);
+                    }
+                });
 
                 await setter(newScripts);
                 saveSettingsDebounced();
@@ -2158,55 +1990,55 @@ jQuery(async () => {
             }),
     };
 
-    SlashCommandParser.addCommandObject(
-        SlashCommand.fromProps({
-            name: 'regex',
-            callback: runRegexCallback,
-            returns: 'replaced text',
-            namedArgumentList: [
-                SlashCommandNamedArgument.fromProps({
-                    name: 'name',
-                    description: 'script name',
-                    typeList: [ARGUMENT_TYPE.STRING],
-                    isRequired: true,
-                    enumProvider: localEnumProviders.regexScripts,
-                }),
-            ],
-            unnamedArgumentList: [new SlashCommandArgument('input', [ARGUMENT_TYPE.STRING], false)],
-            helpString: 'Runs a Regex extension script by name on the provided string. The script must be enabled.',
-        }),
-    );
-    SlashCommandParser.addCommandObject(
-        SlashCommand.fromProps({
-            name: 'regex-toggle',
-            callback: toggleRegexCallback,
-            returns: 'The name of the script that was toggled',
-            namedArgumentList: [
-                SlashCommandNamedArgument.fromProps({
-                    name: 'state',
-                    description:
-                        "Explicitly set the state of the script ('on' to enable, 'off' to disable). If not provided, the state will be toggled to the opposite of the current state.",
-                    typeList: [ARGUMENT_TYPE.BOOLEAN],
-                    defaultValue: 'toggle',
-                    enumList: commonEnumProviders.boolean('onOffToggle')(),
-                }),
-                SlashCommandNamedArgument.fromProps({
-                    name: 'quiet',
-                    description: 'Suppress the toast message script toggled',
-                    typeList: [ARGUMENT_TYPE.BOOLEAN],
-                    defaultValue: 'false',
-                    enumList: commonEnumProviders.boolean('trueFalse')(),
-                }),
-            ],
-            unnamedArgumentList: [
-                SlashCommandArgument.fromProps({
-                    description: 'script name',
-                    typeList: [ARGUMENT_TYPE.STRING],
-                    isRequired: true,
-                    enumProvider: localEnumProviders.regexScripts,
-                }),
-            ],
-            helpString: `
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'regex',
+        callback: runRegexCallback,
+        returns: 'replaced text',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'script name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.regexScripts,
+            }),
+        ],
+        unnamedArgumentList: [
+            new SlashCommandArgument(
+                'input', [ARGUMENT_TYPE.STRING], false,
+            ),
+        ],
+        helpString: 'Runs a Regex extension script by name on the provided string. The script must be enabled.',
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'regex-toggle',
+        callback: toggleRegexCallback,
+        returns: 'The name of the script that was toggled',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'state',
+                description: 'Explicitly set the state of the script (\'on\' to enable, \'off\' to disable). If not provided, the state will be toggled to the opposite of the current state.',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'toggle',
+                enumList: commonEnumProviders.boolean('onOffToggle')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'quiet',
+                description: 'Suppress the toast message script toggled',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'script name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.regexScripts,
+            }),
+        ],
+        helpString: `
             <div>
                 Toggles the state of a specified regex script.
             </div>
@@ -2222,8 +2054,7 @@ jQuery(async () => {
                 </ul>
             </div>
         `,
-        }),
-    );
+    }));
 
     eventSource.on(event_types.MAIN_API_CHANGED, onMainApiChanged);
     eventSource.on(event_types.CHAT_CHANGED, checkCharEmbeddedRegexScripts);
